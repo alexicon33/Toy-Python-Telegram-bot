@@ -23,6 +23,12 @@ q = {'insert': """INSERT INTO Network VALUES(?, ?, ?);""",
 
 
 def start(bot, update):
+    db = sqlite3.connect('Bot_base.db',
+                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+    cur = db.cursor()
+    cur.executescript(open('script.sql', 'r').read())
+    db.commit()
+    db.close()
     bot.send_message(chat_id=update.message.chat_id, text="Привет!\nЯ бот для работы с транспортной сетью.\n" +
                      "/help - узнать список команд.")
 
@@ -216,14 +222,14 @@ def commands(bot, update):
                      text="Команды для работы со мной\n" +
                           "/insert id point - добавить объект c идентификатором id в пункт point\n" +
                           "/delete id - удалить объект с идентификатором id\n" +
-                          "/depart id from to - отправить объект с данным id из пункта from в пункт to" +
-                          "/arrive id - сообщение о прибытии объекта с данным id в пункт назначения" +
-                          "/count_objects point - количество объектов в пункте point на данный момент" +
-                          "/where id - где находится объект с данным id в настоящее время" +
+                          "/depart id from to - отправить объект с данным id из пункта from в пункт to\n" +
+                          "/arrive id - сообщение о прибытии объекта с данным id в пункт назначения\n" +
+                          "/count_objects point - количество объектов в пункте point на данный момент\n" +
+                          "/where id - где находится объект с данным id в настоящее время\n" +
                           "/on_the_road point_from point_to - сколько объектов сейчас находятся на пути " +
-                                                              "из point_from в point_to" +
-                          "/od - посмотреть диаграмму, показывающую, сколько объектов в каждом пункте" +
-                          "/traffic - посмотреть диаграмму, отражающую загруженность путей на данный момент" +
+                                                              "из point_from в point_to\n" +
+                          "/od - посмотреть диаграмму, показывающую, сколько объектов в каждом пункте\n" +
+                          "/traffic - посмотреть диаграмму, отражающую загруженность путей на данный момент\n" +
                           "/stat - вывести имеющиеся данные.")
 
 
