@@ -16,51 +16,76 @@ q = {'insert': """INSERT INTO Network VALUES(?, ?, ?);""",
      'on_the_road': """SELECT COUNT(*) FROM Moves WHERE arrival IS NULL AND point_from = ? AND point_to = ?;""",
      'diagram_points': """SELECT point, COUNT(*) AS cnt FROM Network GROUP BY point ORDER BY cnt;""",
      'where_on_path': """SELECT point_from, point_to FROM Moves WHERE id = ? AND arrival IS NULL;""",
-     'traffic': """SELECT DISTINCT point_from || '-->' || point_to, COUNT(*) AS cnt FROM Moves
-                           WHERE arrival IS NULL
-                           GROUP BY point_from || '-->' || point_to
-                           ORDER BY cnt;"""}
+     'traffic': """SELECT DISTINCT point_from || '-->' || point_to, COUNT(*) AS cnt FROM Moves 
+                   WHERE arrival IS NULL 
+                   GROUP BY point_from || '-->' || point_to 
+                   ORDER BY cnt;""",
+     'congestion': """SELECT DISTINCT point_from || '-->' || point_to, COUNT(*) AS cnt FROM Moves 
+                      WHERE arrival BETWEEN :start AND :finish OR departure BETWEEN :start AND :finish
+                      GROUP BY point_from || '-->' || point_to 
+                      ORDER BY cnt;"""}
 
 
 def start(bot, update):
-    bot.send_message(chat_id=update.message.chat_id, text="Привет!\nЯ бот для работы с транспортной сетью.\n" +
-                     "/help - узнать список команд.")
+    db = sqlite3.connect('Bot_base.db',
+                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+    cur = db.cursor()
+    cur.executescript(open('script.sql', 'r').read())
+    db.commit()
+    db.close()
+    bot.send_message(chat_id=update.message.chat_id,
+                     text='\n'.join([
+                         "Привет!",
+                         "Я бот для работы с транспортной сетью.",
+                          "/help - узнать список команд."
+                     ]))
 
 
 # Добавление объекта с указанным id в указанный пункт point.
 def insert(bot, update, args):
-    db = sqlite3.connect('Bot_base.db',
-                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
-    cur = db.cursor()
-    point = args[1]
-    id = args[0]
-    cur.execute(q['insert'], (id, point, datetime.datetime.now()))
-    db.commit()
-    bot.send_message(chat_id=update.message.chat_id,
-                     text='Объект {} успешно добавлен в пункт {}.'.format(id, point))
+    if not check(bot, update, args, 2):
+        return
+    try:
+        db = sqlite3.connect('Bot_base.db',
+                             detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
+        cur = db.cursor()
+        id, point = args
+        cur.execute(q['insert'], (id, point, datetime.datetime.now()))
+        db.commit()
+        bot.send_message(chat_id=update.message.chat_id,
+                         text='Объект {} успешно добавлен в пункт {}.'.format(id, point))
+    except sqlite3.Error as err:
+        bot.send_message(chat_id=update.message.chat_id,
+                         text='Ошибка при работе с базой данных: ' + str(err))
 
 
 # Удаление объекта с указанным id из базы.
 def delete(bot, update, args):
+    if not check(bot, update, args, 1):
+        return
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
-    id = args[0]
+    id, = args
+    cur.execute('SELECT 1 FROM Network WHERE id = ?', (id, ))
+    if not len(cur.fetchall()):
+        bot.send_message(chat_id=update.message.chat_id,
+                         text='Данный объект отсутствует в таблице.')
+        return
     cur.execute(q['delete'], (id, ))
     db.commit()
-    db.close()
     bot.send_message(chat_id=update.message.chat_id,
                      text='Объект {} успешно удалён.'.format(id))
 
 
 # Отправление объекта с указанным id из пункта point_from в пункт point_to.
 def depart(bot, update, args):
+    if not check(bot, update, args, 3):
+        return
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
-    id = args[0]
-    point_from = args[1]
-    point_to = args[2]
+    id, point_from, point_to = args
     cur.execute('SELECT 1 FROM Network WHERE id = ? AND point = ?', (id, point_from))
     if not len(cur.fetchall()):
         bot.send_message(chat_id=update.message.chat_id,
@@ -76,7 +101,9 @@ def depart(bot, update, args):
 
 # Прибытие объекта с указанным id в пункт назначения.
 def arrive(bot, update, args):
-    id = args[0]
+    if not check(bot, update, args, 1):
+        return
+    id, = args
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
@@ -101,7 +128,9 @@ def arrive(bot, update, args):
 
 # Подсчёт количетсва объектов в некотором указанном пункте.
 def count_objects(bot, update, args):
-    point = args[0]
+    if not check(bot, update, args, 1):
+        return
+    point, = args
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
@@ -109,12 +138,14 @@ def count_objects(bot, update, args):
     db.commit()
     bot.send_message(chat_id=update.message.chat_id,
                      text='На данный момент в пункте {} объектов: '.format(point) +
-                          '\n'.join(' '.join(str(i) for i in row) for row in cur) + '.')
+                          [str(i) for row in cur for i in row][0] + '.')
 
 
 # Позволяет узнать, где находится объект с указанным id.
 def where(bot, update, args):
-    id = args[0]
+    if not check(bot, update, args, 1):
+        return
+    id, = args
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
@@ -124,14 +155,14 @@ def where(bot, update, args):
     if len(result_list):
         bot.send_message(chat_id=update.message.chat_id,
                          text='Объект {} в пункте '.format(id) +
-                              '\n'.join(' '.join(str(i) for i in row) for row in result_list) + '.')
+                              [str(i) for row in result_list for i in row][0] + '.')
         return
     cur.execute(q['where_on_path'], (id, ))
     result_list = cur.fetchall()
     if len(result_list):
         bot.send_message(chat_id=update.message.chat_id,
                          text='Объект {} в пути от '.format(id) +
-                              ''.join(' до '.join(str(i) for i in row) for row in result_list) + '.')
+                              ' до '.join([str(i) for row in result_list for i in row]) + '.')
         return
     bot.send_message(chat_id=update.message.chat_id,
                      text='Объект {} нигде не обнаружен.'.format(id))
@@ -139,15 +170,16 @@ def where(bot, update, args):
 
 # Подсчёт количества объектов на конкретном указанном пути.
 def on_the_road(bot, update, args):
-    point_from = args[0]
-    point_to = args[1]
+    if not check(bot, update, args, 2):
+        return
+    point_from, point_to = args
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
     cur.execute(q['on_the_road'], (point_from, point_to))
     bot.send_message(chat_id=update.message.chat_id,
                      text='Сейчас в пути от {} до {} объектов: '.format(point_from, point_to) +
-                          ''.join(''.join(str(i) for i in row) for row in cur) + '.')
+                          [str(i) for row in cur for i in row][0] + '.')
 
 
 # Полный вывод обеих табличек.
@@ -170,15 +202,12 @@ def objects_distribution(bot, update):
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
     cur.execute(q['diagram_points'])
-    x = []
-    y = []
-    for row in cur:
-        x += [row[0]]
-        y += [row[1]]
-    if not len(x):
+    temp = cur.fetchall()
+    if not len(temp):
         bot.send_message(chat_id=update.message.chat_id,
                          text='Нет объектов - нет диаграммы...')
         return
+    x, y = zip(*temp)
     fig = plt.figure()
     plt.bar(x, y, width=1.2 / len(x), color=(0.01, 0.51, 0.76), alpha=0.75)
     plt.title('Objects distribution')
@@ -187,24 +216,34 @@ def objects_distribution(bot, update):
     bot.send_photo(chat_id=update.message.chat_id, photo=open('diagram.png', 'rb'))
 
 
-# Построение диаграммы загруженности путей на текущий момент.
-def traffic(bot, update):
+# Построение диаграммы загруженности путей. Если эта функция вызывается без аргументов,
+# строится диаграмма загруженности путей на текущий момент. Если она вызывается с двумя аргументами -
+# начальным и конечным временем, строится диаграмма загруженности путей в течение заданного временного промежутка.
+def traffic(bot, update, args):
+    if len(args) != 0 and len(args) != 2:
+        check(bot, update, args, 0)
+        return
     db = sqlite3.connect('Bot_base.db',
                          detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     cur = db.cursor()
-    cur.execute(q['traffic'])
-    x = []
-    y = []
-    for row in cur:
-        x += [row[0]]
-        y += [row[1]]
-    if not len(x):
+    if len(args) == 0:
+        cur.execute(q['traffic'])
+    if len(args) == 2:
+        start = [int(i) for i in args[0].split('-')]
+        finish = [int(i) for i in args[1].split('-')]
+        cur.execute(q['congestion'], {'start': datetime.datetime(*start), 'finish': datetime.datetime(*finish)})
+    temp = cur.fetchall()
+    if not len(temp):
         bot.send_message(chat_id=update.message.chat_id,
                          text='Все дороги пусты!')
         return
+    x, y = zip(*temp)
     fig = plt.figure()
     plt.bar(x, y, width=1.2 / len(x), color=(0.01, 0.51, 0.76), alpha=0.75)
-    plt.title('Traffic congestion')
+    if len(args) == 0:
+        plt.title('Current traffic congestion')
+    else:
+        plt.title('Traffic congestion during this time')
     plt.grid(True)
     fig.savefig('traffic.png')
     bot.send_photo(chat_id=update.message.chat_id, photo=open('traffic.png', 'rb'))
@@ -213,18 +252,33 @@ def traffic(bot, update):
 # Вывод списка допустимых команд.
 def commands(bot, update):
     bot.send_message(chat_id=update.message.chat_id,
-                     text="Команды для работы со мной\n" +
-                          "/insert id point - добавить объект c идентификатором id в пункт point\n" +
-                          "/delete id - удалить объект с идентификатором id\n" +
-                          "/depart id from to - отправить объект с данным id из пункта from в пункт to" +
-                          "/arrive id - сообщение о прибытии объекта с данным id в пункт назначения" +
-                          "/count_objects point - количество объектов в пункте point на данный момент" +
-                          "/where id - где находится объект с данным id в настоящее время" +
-                          "/on_the_road point_from point_to - сколько объектов сейчас находятся на пути " +
-                                                              "из point_from в point_to" +
-                          "/od - посмотреть диаграмму, показывающую, сколько объектов в каждом пункте" +
-                          "/traffic - посмотреть диаграмму, отражающую загруженность путей на данный момент" +
-                          "/stat - вывести имеющиеся данные.")
+                     text='\n'.join([
+                         "Команды для работы со мной:",
+                         "/insert id point - добавить объект c идентификатором id в пункт point",
+                         "/delete id - удалить объект с идентификатором id",
+                         "/depart id from to - отправить объект с данным id из пункта from в пункт to",
+                         "/arrive id - сообщение о прибытии объекта с данным id в пункт назначения",
+                         "/count_objects point - количество объектов в пункте point на данный момент",
+                         "/where id - где находится объект с данным id в настоящее время",
+                         "/on_the_road from to - сколько объектов сейчас находятся на пути из пункта from в пункт to",
+                         "/od - посмотреть диаграмму, показывающую, сколько объектов в каждом пункте",
+                         "/traffic - посмотреть диаграмму, отражающую загруженность путей на данный момент",
+                         "/traffic start finish посмотреть диаграмму, отражающую загруженность путей "
+                         "в течение времени от start до finish включительно.",
+                         "/stat - вывести имеющиеся данные."
+                     ]))
+
+
+# Проверка на то, что число аргументов равно number.
+def check(bot, update, args, number):
+    if len(args) != number:
+        bot.send_message(chat_id=update.message.chat_id,
+                         text='\n'.join([
+                             "Ошибка: неправильное число аргументов.",
+                             "Ожидалось: {}".format(number),
+                             "Получено: {}".format(len(args))]))
+        return False
+    return True
 
 
 def main():
@@ -240,7 +294,7 @@ def main():
     dp.add_handler(CommandHandler('on_the_road', on_the_road, pass_args=True))
     dp.add_handler(CommandHandler('stat', stat))
     dp.add_handler(CommandHandler('od', objects_distribution))
-    dp.add_handler(CommandHandler('traffic', traffic))
+    dp.add_handler(CommandHandler('traffic', traffic, pass_args=True))
     dp.add_handler(CommandHandler('help', commands))
 
     updater.start_polling()
